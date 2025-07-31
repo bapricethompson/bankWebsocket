@@ -34,6 +34,12 @@ function startRound(roomCode) {
   });
 
   room.interval = setInterval(() => {
+    if (room.banked.size === Object.keys(room.players).length) {
+      // All players have banked
+      console.log("All players have banked!");
+      // You can trigger next round or any other logic here
+    }
+
     const d1 = rollDie();
     const d2 = rollDie();
     const sum = d1 + d2;
@@ -75,10 +81,43 @@ function startRound(roomCode) {
           if (room.currentRound <= room.maxRounds) {
             startRound(roomCode);
           } else {
-            broadcast(roomCode, {
-              type: "game_over",
-              leaderboard: room.leaderboard,
+            const sortedEntries = Object.entries(room.leaderboard).sort(
+              (a, b) => b[1] - a[1]
+            );
+
+            const topPlayers = sortedEntries
+              .slice(0, 3)
+              .map(([name, score]) => ({
+                name,
+                score,
+              }));
+
+            // Create a map of player name -> rank (1-indexed)
+            const playerRanks = {};
+            sortedEntries.forEach(([name, score], index) => {
+              playerRanks[name] = {
+                rank: index + 1,
+                score,
+              };
             });
+
+            // Broadcast game over info with full ranking per player
+            for (const [playerName, socket] of Object.entries(room.players)) {
+              const playerData = playerRanks[playerName];
+              if (!playerData || socket.readyState !== WebSocket.OPEN) continue;
+
+              socket.send(
+                JSON.stringify({
+                  type: "game_over",
+                  leaderboard: room.leaderboard,
+                  topPlayers,
+                  yourPlacement: {
+                    rank: playerData.rank,
+                    score: playerData.score,
+                  },
+                })
+              );
+            }
           }
         }, 4000);
 
@@ -110,6 +149,8 @@ wss.on("connection", (socket) => {
 
       if (type === "host_create") {
         const roomCode = data.room;
+        const maxRounds = parseInt(data.maxRounds) || 10;
+        console.log(maxRounds);
         if (rooms[roomCode]) {
           socket.send(
             JSON.stringify({
@@ -129,7 +170,7 @@ wss.on("connection", (socket) => {
           banked: new Set(),
           interval: null,
           currentRound: 1,
-          maxRounds: 10, // Change this if needed
+          maxRounds,
         };
 
         socket.isHost = true;
